@@ -2,11 +2,11 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 from supabase import create_client, Client
 
 app = FastAPI(title="RJSE Secure API")
 
-# อนุญาตให้หน้าเว็บทุกที่เรียกใช้ API นี้ได้
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ดึง Key จากระบบความปลอดภัยของ Render
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
@@ -27,11 +26,14 @@ class StatusUpdate(BaseModel):
     opportunity_id: str
     new_status: str
 
+class NoteUpdate(BaseModel):
+    opportunity_id: str
+    notes: str
+
 @app.get("/")
 def root():
     return {"status": "online", "message": "RJSE Backend API is running"}
 
-# API ส่งข้อมูลโครงการไปแสดงที่หน้าเว็บ
 @app.get("/api/projects")
 def get_all_projects():
     if not supabase:
@@ -52,7 +54,8 @@ def get_all_projects():
                 opportunity_score,
                 score_tier,
                 recommended_products,
-                lead_status
+                lead_status,
+                score_reasons
             )
         """).order("created_at", desc=True).execute()
         
@@ -60,22 +63,35 @@ def get_all_projects():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# API บันทึกสถานะการโทร
 @app.post("/api/update-status")
 def update_lead_status(payload: StatusUpdate):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     
     try:
-        res = supabase.table("opportunities").update({
+        supabase.table("opportunities").update({
             "lead_status": payload.new_status
         }).eq("id", payload.opportunity_id).execute()
         
-        return {"status": "success", "message": "Updated successfully"}
+        return {"status": "success", "message": "Status updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# API ดึงโครงการสดใหม่เข้า Supabase
+@app.post("/api/update-note")
+def update_lead_note(payload: NoteUpdate):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    try:
+        # เก็บข้อความโน้ตลงในคอลัมน์ score_reasons รูปแบบ jsonb
+        supabase.table("opportunities").update({
+            "score_reasons": {"sales_note": payload.notes}
+        }).eq("id", payload.opportunity_id).execute()
+        
+        return {"status": "success", "message": "Note saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/sync-leads")
 def sync_leads():
     if not supabase:
@@ -129,7 +145,8 @@ def sync_leads():
                         "opportunity_score": item["score"],
                         "score_tier": item["tier"],
                         "recommended_products": item["products"],
-                        "lead_status": "ยังไม่โทร"
+                        "lead_status": "ยังไม่โทร",
+                        "score_reasons": {"sales_note": ""}
                     }).execute()
                     new_count += 1
 
