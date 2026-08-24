@@ -1,4 +1,5 @@
 import os
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -17,14 +18,27 @@ app.add_middleware(
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN")
 
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def send_line_alert(message: str):
+    """ฟังก์ชันยิงแจ้งเตือนเข้า LINE กลุ่มฝ่ายขาย"""
+    if not LINE_NOTIFY_TOKEN:
+        return
+    try:
+        url = "https://notify-api.line.me/api/notify"
+        headers = {"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"}
+        requests.post(url, headers=headers, data={"message": message}, timeout=5)
+    except Exception as e:
+        print(f"LINE Alert Error: {e}")
+
 class StatusUpdate(BaseModel):
     opportunity_id: str
     new_status: str
+    project_name: Optional[str] = ""
 
 class NoteUpdate(BaseModel):
     opportunity_id: str
@@ -77,6 +91,12 @@ def update_lead_status(payload: StatusUpdate):
         supabase.table("opportunities").update({
             "lead_status": payload.new_status
         }).eq("id", payload.opportunity_id).execute()
+
+        # ถ้านัดเข้าพบ หรือ ลูกค้าสนใจ แจ้งเข้า LINE ทีม
+        if payload.new_status in ["ลูกค้าสนใจ", "นัดเข้าพบ"]:
+            alert_msg = f"\n🎯 [อัปเดตงานขาย]: {payload.new_status}\nโครงการ: {payload.project_name}\nติดตามผลด่วนในระบบ!"
+            send_line_alert(alert_msg)
+
         return {"status": "success", "message": "Status updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -98,7 +118,6 @@ def create_manual_lead(payload: ManualLeadCreate):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     try:
-        # ระบบคำนวณคะแนนและสเปกท่ออัตโนมัติ
         score = 60
         if payload.total_budget >= 10000000:
             score += 25
@@ -135,6 +154,10 @@ def create_manual_lead(payload: ManualLeadCreate):
                 "lead_status": "ยังไม่โทร",
                 "score_reasons": {"sales_note": "เพิ่มข้อมูลด้วยตนเอง"}
             }).execute()
+
+        # แจ้งเตือนโครงการใหม่เข้า LINE ทันที
+        msg = f"\n⚡ [พบโครงการใหม่เข้าระบบ]\nโครงการ: {payload.project_name}\nผู้รับเหมา: {payload.contractor_name}\nงบประมาณ: ฿{payload.total_budget:,.0f}\nคะแนนความเร่งด่วน: {score}/100 ({tier})\nเบอร์โทร: {payload.contractor_phone}"
+        send_line_alert(msg)
 
         return {"status": "success", "message": "Lead created successfully"}
     except Exception as e:
@@ -194,6 +217,10 @@ def sync_leads():
                         "score_reasons": {"sales_note": ""}
                     }).execute()
                     new_count += 1
+                    
+                    if item["tier"] == "HOT":
+                        send_line_alert(f"\n🔥 [งานด่วน HOT]: {item['name']}\nผู้รับเหมา: {item['contractor']}\nเบอร์: {item['phone']}")
+                        
         return {"status": "success", "new_count": new_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
