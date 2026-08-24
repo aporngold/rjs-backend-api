@@ -180,16 +180,20 @@ def fetch_real_government_procurement():
     keywords = ["ระบบไฟฟ้า", "หม้อแปลงไฟฟ้า", "ตู้ MDB", "สายไฟฟ้า", "ท่อร้อยสายไฟ"]
     fetched_projects = []
 
-    # ดึงข้อมูลจาก Open Data Portal
     for kw in keywords:
+        # กำหนด Endpoint ทั้งแบบ Header และแบบ Query Param ของศูนย์กลางภาครัฐ
         endpoints = [
-            f"https://opend.data.go.th/govspending/cgdcontract?api-key={api_key}&keyword={kw}&limit=20",
-            f"https://govspending.data.go.th/api/service/cgdcontract?api-key={api_key}&keyword={kw}&limit=20"
+            f"https://govspending.data.go.th/api/service/cgdcontract?user_token={api_key}&keyword={kw}&limit=20",
+            f"https://opend.data.go.th/govspending/cgdcontract?api-key={api_key}&keyword={kw}&limit=20"
         ]
+        
         for url in endpoints:
             try:
-                headers = {"api-key": api_key, "User-Agent": "Mozilla/5.0"}
-                res = requests.get(url, headers=headers, timeout=6)
+                headers = {
+                    "api-key": api_key,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                }
+                res = requests.get(url, headers=headers, timeout=8)
                 if res.status_code == 200:
                     resp_json = res.json()
                     items = resp_json.get("result") or resp_json.get("data") or []
@@ -197,27 +201,30 @@ def fetch_real_government_procurement():
                         fetched_projects.extend(items)
                         break
             except Exception as e:
-                print(f"API Fetch Error ({kw}): {e}")
+                print(f"API Fetch Error for keyword '{kw}' on {url}: {e}")
                 continue
 
     # บันทึกข้อมูลโครงการจริงเข้า Supabase
     for item in fetched_projects:
-        proj_id = str(item.get("project_id") or item.get("project_number") or "")
-        proj_name = item.get("project_name") or item.get("project_name_th")
-        dept_name = item.get("dept_name") or item.get("department_name") or "หน่วยงานภาครัฐ"
-        
-        raw_budget = item.get("sum_price_agree") or item.get("budget_total") or item.get("contract_money") or 0
         try:
-            budget = float(str(raw_budget).replace(",", ""))
-        except:
-            budget = 0.0
+            proj_name = item.get("project_name") or item.get("project_name_th")
+            if not proj_name:
+                continue
 
-        winner = item.get("winner") or item.get("contractor_name") or "ผู้รับเหมาผู้ชนะการเสนอราคา"
+            proj_id = str(item.get("project_id") or item.get("project_number") or f"GOV_{abs(hash(proj_name)) % 10000000}")
+            dept_name = item.get("dept_name") or item.get("department_name") or "หน่วยงานภาครัฐ"
+            
+            raw_budget = item.get("sum_price_agree") or item.get("budget_total") or item.get("contract_money") or 0
+            try:
+                budget = float(str(raw_budget).replace(",", "").strip())
+            except (ValueError, TypeError):
+                budget = 0.0
 
-        if not proj_id or not proj_name or budget <= 0:
-            continue
+            winner = item.get("winner") or item.get("contractor_name") or "ผู้รับเหมาผู้ชนะการเสนอราคา"
 
-        try:
+            if budget <= 0:
+                continue
+
             existing = supabase.table("projects").select("id").eq("project_code", proj_id).execute()
             if not existing.data:
                 score = 65
@@ -225,7 +232,7 @@ def fetch_real_government_procurement():
                     score += 25
                 elif budget >= 2000000:
                     score += 15
-                if any(k in proj_name for k in ["โรงงาน", "สถานีไฟฟ้าย่อย", "อาคารสูง", "MDB"]):
+                if any(k in proj_name for k in ["โรงงาน", "สถานีไฟฟ้าย่อย", "อาคารสูง", "MDB", "หม้อแปลง"]):
                     score += 10
                     
                 score = min(score, 98)
