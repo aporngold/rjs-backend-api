@@ -37,25 +37,28 @@ def get_all_projects():
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     
-    res = supabase.table("projects").select("""
-        id,
-        project_code,
-        project_name,
-        project_type,
-        total_budget,
-        contractor_name,
-        contractor_phone,
-        contractor_email,
-        opportunities (
+    try:
+        res = supabase.table("projects").select("""
             id,
-            opportunity_score,
-            score_tier,
-            recommended_products,
-            lead_status
-        )
-    """).order("created_at", ascending=False).execute()
-    
-    return {"status": "success", "data": res.data}
+            project_code,
+            project_name,
+            project_type,
+            total_budget,
+            contractor_name,
+            contractor_phone,
+            contractor_email,
+            opportunities (
+                id,
+                opportunity_score,
+                score_tier,
+                recommended_products,
+                lead_status
+            )
+        """).order("created_at", desc=True).execute()
+        
+        return {"status": "success", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # API บันทึกสถานะการโทร
 @app.post("/api/update-status")
@@ -63,11 +66,14 @@ def update_lead_status(payload: StatusUpdate):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     
-    res = supabase.table("opportunities").update({
-        "lead_status": payload.new_status
-    }).eq("id", payload.opportunity_id).execute()
-    
-    return {"status": "success", "message": "Updated successfully"}
+    try:
+        res = supabase.table("opportunities").update({
+            "lead_status": payload.new_status
+        }).eq("id", payload.opportunity_id).execute()
+        
+        return {"status": "success", "message": "Updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # API ดึงโครงการสดใหม่เข้า Supabase
 @app.post("/api/sync-leads")
@@ -103,27 +109,30 @@ def sync_leads():
     ]
 
     new_count = 0
-    for item in fresh_leads:
-        existing = supabase.table("projects").select("id").eq("project_code", item["code"]).execute()
-        if not existing.data:
-            new_p = supabase.table("projects").insert({
-                "project_code": item["code"],
-                "project_name": item["name"],
-                "project_type": item["type"],
-                "total_budget": item["budget"],
-                "contractor_name": item["contractor"],
-                "contractor_phone": item["phone"],
-                "contractor_email": item["email"]
-            }).execute()
-
-            if new_p.data:
-                supabase.table("opportunities").insert({
-                    "project_id": new_p.data[0]["id"],
-                    "opportunity_score": item["score"],
-                    "score_tier": item["tier"],
-                    "recommended_products": item["products"],
-                    "lead_status": "ยังไม่โทร"
+    try:
+        for item in fresh_leads:
+            existing = supabase.table("projects").select("id").eq("project_code", item["code"]).execute()
+            if not existing.data:
+                new_p = supabase.table("projects").insert({
+                    "project_code": item["code"],
+                    "project_name": item["name"],
+                    "project_type": item["type"],
+                    "total_budget": item["budget"],
+                    "contractor_name": item["contractor"],
+                    "contractor_phone": item["phone"],
+                    "contractor_email": item["email"]
                 }).execute()
-                new_count += 1
 
-    return {"status": "success", "new_count": new_count}
+                if new_p.data:
+                    supabase.table("opportunities").insert({
+                        "project_id": new_p.data[0]["id"],
+                        "opportunity_score": item["score"],
+                        "score_tier": item["tier"],
+                        "recommended_products": item["products"],
+                        "lead_status": "ยังไม่โทร"
+                    }).execute()
+                    new_count += 1
+
+        return {"status": "success", "new_count": new_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
