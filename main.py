@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 from supabase import create_client, Client
 
-app = FastAPI(title="RJSE Secure API")
+app = FastAPI(title="RJSE Secure API (Production)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,7 +25,7 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def send_line_broadcast(message: str):
-    """ส่งข้อความแจ้งเตือนผ่าน LINE Messaging API (Broadcast Message)"""
+    """ส่งข้อความแจ้งเตือนผ่าน LINE Messaging API"""
     if not LINE_CHANNEL_ACCESS_TOKEN:
         return
     try:
@@ -66,7 +66,7 @@ class ManualLeadCreate(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "online", "message": "RJSE Backend API is running"}
+    return {"status": "online", "message": "RJSE Backend API Production is running"}
 
 @app.get("/api/projects")
 def get_all_projects():
@@ -105,7 +105,7 @@ def update_lead_status(payload: StatusUpdate):
         }).eq("id", payload.opportunity_id).execute()
 
         if payload.new_status in ["ลูกค้าสนใจ", "นัดเข้าพบ"]:
-            alert_msg = f"🎯 [อัปเดตงานขาย]: {payload.new_status}\nโครงการ: {payload.project_name or '-'}\nกรุณาตรวจสอบรายละเอียดในระบบ RJSE Dashboard"
+            alert_msg = f"🎯 [อัปเดตงานขายจริง]: {payload.new_status}\nโครงการ: {payload.project_name or '-'}\nกรุณาตรวจสอบรายละเอียดในระบบ RJSE Dashboard"
             send_line_broadcast(alert_msg)
 
         return {"status": "success", "message": "Status updated successfully"}
@@ -144,7 +144,7 @@ def create_manual_lead(payload: ManualLeadCreate):
             
         score = min(score, 98)
         tier = "HOT" if score >= 80 else "WARM"
-        code = f"MANUAL_{int(payload.total_budget)}_{os.urandom(2).hex().upper()}"
+        code = f"ACTUAL_{int(payload.total_budget)}_{os.urandom(2).hex().upper()}"
 
         new_p = supabase.table("projects").insert({
             "project_code": code,
@@ -163,10 +163,10 @@ def create_manual_lead(payload: ManualLeadCreate):
                 "score_tier": tier,
                 "recommended_products": products,
                 "lead_status": "ยังไม่โทร",
-                "score_reasons": {"sales_note": "เพิ่มข้อมูลด้วยตนเอง"}
+                "score_reasons": {"sales_note": "บันทึกข้อมูลจริงจากหน้างาน"}
             }).execute()
 
-        msg = f"⚡ [พบโครงการใหม่เข้าระบบ]\nโครงการ: {payload.project_name}\nผู้รับเหมา: {payload.contractor_name}\nงบประมาณ: ฿{payload.total_budget:,.0f}\nระดับความเร่งด่วน: {score}/100 ({tier})\nเบอร์โทร: {payload.contractor_phone}"
+        msg = f"⚡ [มีโครงการจริงเข้าระบบ]\nโครงการ: {payload.project_name}\nผู้รับเหมา: {payload.contractor_name}\nงบประมาณ: ฿{payload.total_budget:,.0f}\nระดับความเร่งด่วน: {score}/100 ({tier})\nเบอร์โทร: {payload.contractor_phone}"
         send_line_broadcast(msg)
 
         return {"status": "success", "message": "Lead created successfully"}
@@ -175,62 +175,5 @@ def create_manual_lead(payload: ManualLeadCreate):
 
 @app.api_route("/api/sync-leads", methods=["GET", "POST"])
 def sync_leads():
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    fresh_leads = [
-        {
-            "code": "REAL_IND_SKN_2026",
-            "name": "งานติดตั้งระบบไฟฟ้ากำลัง ตู้ MDB และหม้อแปลง โรงงานผลิตและคลังสินค้า",
-            "type": "โรงงานอุตสาหกรรม / ภาคเอกชน",
-            "budget": 16500000,
-            "contractor": "บริษัท เอส เค เอ็น เพาเวอร์ เอ็นจิเนียริ่ง จำกัด",
-            "phone": "02-465-2899",
-            "email": "skn_power@yahoo.com",
-            "products": "หม้อแปลงไฟฟ้า, ตู้ MDB, ราง Cable Tray, ท่อหนา RSC, โคม High Bay LED",
-            "score": 88,
-            "tier": "HOT"
-        },
-        {
-            "code": "REAL_COMM_PPOWER_2026",
-            "name": "รับเหมาติดตั้งเดินระบบไฟฟ้าแรงต่ำ-สูง ตู้สวิตช์บอร์ด อาคารสำนักงานและโกดัง",
-            "type": "อาคารพาณิชย์ / ผู้รับเหมาไฟฟ้าเอกชน",
-            "budget": 8900000,
-            "contractor": "พี-เพาเวอร์ โซลูชั่นส์ (P-Power Solutions)",
-            "phone": "091-067-6398",
-            "email": "ppowersolutions1999@gmail.com",
-            "products": "รางแลดเดอร์, ท่อร้อยสายไฟ HDPE/IMC, ตู้คอนซูมเมอร์, สาย THW/NYY",
-            "score": 78,
-            "tier": "WARM"
-        }
-    ]
-    new_count = 0
-    try:
-        for item in fresh_leads:
-            existing = supabase.table("projects").select("id").eq("project_code", item["code"]).execute()
-            if not existing.data:
-                new_p = supabase.table("projects").insert({
-                    "project_code": item["code"],
-                    "project_name": item["name"],
-                    "project_type": item["type"],
-                    "total_budget": item["budget"],
-                    "contractor_name": item["contractor"],
-                    "contractor_phone": item["phone"],
-                    "contractor_email": item["email"]
-                }).execute()
-                if new_p.data:
-                    supabase.table("opportunities").insert({
-                        "project_id": new_p.data[0]["id"],
-                        "opportunity_score": item["score"],
-                        "score_tier": item["tier"],
-                        "recommended_products": item["products"],
-                        "lead_status": "ยังไม่โทร",
-                        "score_reasons": {"sales_note": ""}
-                    }).execute()
-                    new_count += 1
-                    
-                    if item["tier"] == "HOT":
-                        send_line_broadcast(f"🔥 [งานด่วน HOT เข้าใหม่]: {item['name']}\nผู้รับเหมา: {item['contractor']}\nเบอร์: {item['phone']}")
-                        
-        return {"status": "success", "new_count": new_count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Endpoint สำหรับดึงข้อมูลอัตโนมัติ (ไม่มีการสุ่ม Mock Data)"""
+    return {"status": "success", "message": "Ready for real integration feed", "new_count": 0}
