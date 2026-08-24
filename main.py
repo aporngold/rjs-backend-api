@@ -173,7 +173,7 @@ def create_manual_lead(payload: ManualLeadCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/sync-leads")
+@app.api_route("/api/sync-leads", methods=["GET", "POST"])
 def sync_leads():
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
